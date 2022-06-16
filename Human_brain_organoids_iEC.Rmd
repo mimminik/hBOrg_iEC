@@ -1,0 +1,476 @@
+---
+title: "Human brain organoids iEC"
+author: "Marina Nikolova"
+date: "28/04/2022"
+output: html_document
+---
+
+```{r set up, include = FALSE}
+
+library(Matrix)
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(viridis)
+library(Rmagic)
+library(simspec)
+library(presto)
+library(purrr)
+library(stringr)
+library(sctransform)
+library(patchwork)
+
+setwd("/home/marinani/PhD_Projects/Brain_endothelial_cells/")
+source(file = "/home/marinani/Scripts/Data_analysis/feature_plots.r")
+
+```
+
+### Load the data
+```{r load data, include = FALSE}
+
+prot_1_1.data <- Read10X(data.dir="/home/marinani/PhD_Projects/Brain_endothelial_cells/Data/Brain_organoids_endothel/human_brain_organoids_iEC_protocol1_1")
+prot_1_2.data <- Read10X(data.dir="/home/marinani/PhD_Projects/Brain_endothelial_cells/Data/Brain_organoids_endothel/human_brain_organoids_iEC_protocol1_2")
+prot_2_1.data <- Read10X(data.dir="/home/marinani/PhD_Projects/Brain_endothelial_cells/Data/Brain_organoids_endothel/human_brain_organoids_iEC_protocol2_1")
+prot_2_2.data <- Read10X(data.dir="/home/marinani/PhD_Projects/Brain_endothelial_cells/Data/Brain_organoids_endothel/human_brain_organoids_iEC_protocol2_2")
+
+```
+
+### Create Seurat objects
+```{r create seurat objects, include = FALSE}
+
+prot_1_1 <- CreateSeuratObject(counts = prot_1_1.data, project = "prot_1_1")
+prot_1_2 <- CreateSeuratObject(counts = prot_1_2.data, project = "prot_1_2")
+prot_2_1 <- CreateSeuratObject(counts = prot_2_1.data, project = "prot_2_1")
+prot_2_2 <- CreateSeuratObject(counts = prot_2_2.data, project = "prot_2_2")
+
+seurat <- merge(prot_1_1, y = c(prot_1_2, prot_2_1,prot_2_2), add.cell.ids = c("prot_1_1", "prot_1_2", "prot_2_1", "prot_2_2"), project = "brain_org_iEC")
+
+```
+
+### Generate a data frame with the quality metrics
+```{r generating quality metrics, echo = FALSE, warning = FALSE, message = FALSE}
+
+# list_seurat <- list(prot_1_1, prot_1_2, prot_2_1, prot_2_2)
+# seurat <- lapply(list_seurat, function(x) {x[['percent.mt']] <- PercentageFeatureSet(x, pattern = "^MT"); x})
+# test <- lapply(list_seurat, function(x){
+#   View(x@meta.data)
+#   })
+
+prot_1_1[["percent.mt"]] <- PercentageFeatureSet(prot_1_1, pattern = "^MT[-\\.]")
+prot_1_2[["percent.mt"]] <- PercentageFeatureSet(prot_1_2, pattern = "^MT[-\\.]")
+prot_2_1[["percent.mt"]] <- PercentageFeatureSet(prot_2_1, pattern = "^MT[-\\.]")
+prot_2_2[["percent.mt"]] <- PercentageFeatureSet(prot_2_2, pattern = "^MT[-\\.]")
+
+# Add number of genes per UMI for each cell to metadata
+seurat$log10GenesPerUMI <- log10(seurat$nFeature_RNA) / log10(seurat$nCount_RNA)
+
+# Compute percent mito ratio
+seurat$mitoRatio <- PercentageFeatureSet(object = seurat, pattern = "^MT-")
+seurat$mitoRatio <- seurat@meta.data$mitoRatio / 100
+
+# Create metadata dataframe
+metadata <- seurat@meta.data
+table(metadata$orig.ident)
+
+# Add cell IDs to metadata
+metadata$cells <- rownames(metadata)
+
+# Rename columns
+metadata <- metadata %>%
+        dplyr::rename(nUMI = nCount_RNA,
+                      nGene = nFeature_RNA)
+
+# Create sample column
+metadata$sample <- NA
+metadata$sample[which(str_detect(metadata$cells, "^prot_1_1"))] <- "prot_1_1"
+metadata$sample[which(str_detect(metadata$cells, "^prot_1_2"))] <- "prot_1_2"
+metadata$sample[which(str_detect(metadata$cells, "^prot_2_1"))] <- "prot_2_1"
+metadata$sample[which(str_detect(metadata$cells, "^prot_2_2"))] <- "prot_2_2"
+
+```
+
+### Save the quality metrics and the Seurat object with them
+```{r saving quality metrics, include = FALSE}
+
+# Add metadata back to Seurat object
+seurat@meta.data <- metadata
+                           
+# Create .RData object to load at any time
+save(seurat, file="/home/marinani/PhD_Projects/Brain_endothelial_cells/Data/merged_filtered_seurat.RData")
+saveRDS(seurat, file="/home/marinani/PhD_Projects/Brain_endothelial_cells/Data/merged_filtered_seurat.rds")
+
+```
+
+### Assess data quality
+```{r assessing the data quality, echo = FALSE, warning = FALSE, message = FALSE,fig.height = 12, fig.width = 8}
+
+# Visualize the distribution of quality metrics
+vln_prot_1_1 <- VlnPlot(prot_1_1, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size=0)
+vln_prot_1_2 <- VlnPlot(prot_1_2, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size=0)
+vln_prot_2_1 <- VlnPlot(prot_2_1, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size=0)
+vln_prot_2_2 <- VlnPlot(prot_2_2, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size=0)
+# plot using patchwork
+# fig.height = 12, fig.width = 8
+vln_prot_1_1 / vln_prot_1_2 / vln_prot_2_1 / vln_prot_2_2
+
+plot1_prot_1_1 <- FeatureScatter(prot_1_1, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2_prot_1_1 <- FeatureScatter(prot_1_1, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1_prot_1_2 <- FeatureScatter(prot_1_2, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2_prot_1_2 <- FeatureScatter(prot_1_2, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1_prot_2_1 <- FeatureScatter(prot_2_1, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2_prot_2_1 <- FeatureScatter(prot_2_1, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1_prot_2_2 <- FeatureScatter(prot_2_2, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2_prot_2_2 <- FeatureScatter(prot_2_2, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+# plot using patchwork
+# fig.height = 9, fig.width = 9
+(plot1_prot_1_1 | plot2_prot_1_1) / 
+(plot1_prot_1_2 | plot2_prot_1_2) / 
+(plot1_prot_2_1 | plot2_prot_2_1) /
+(plot1_prot_2_2 | plot2_prot_2_2)
+
+# Visualize the number of cell counts per sample
+metadata %>% 
+  	ggplot(aes(x=sample, fill=sample)) + 
+  	geom_bar(fill=colorful_multi(4)) +
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle("Number of Cells before QC")
+
+# Visualize the number UMIs/transcripts per cell
+metadata %>% 
+  	ggplot(aes(color=sample, x=nUMI, fill= sample)) + 
+  	geom_density(alpha = 0.2) + 
+  	scale_x_log10() + 
+  	theme_classic() +
+  	ylab("log10 Cell density before QC") +
+  	geom_vline(xintercept = 500) +
+    scale_fill_manual(values=colorful_multi(4))
+
+# Visualize the distribution of genes detected per cell via histogram
+metadata %>% 
+  	ggplot(aes(color=sample, x=nGene, fill= sample)) + 
+  	geom_density(alpha = 0.2) + 
+  	theme_classic() +
+  	scale_x_log10() + 
+    ylab("log10 Cell density before QC") +
+  	geom_vline(xintercept = 300) +
+    scale_fill_manual(values=colorful_multi(4))
+
+# Visualize the distribution of genes detected per cell via boxplot
+metadata %>% 
+  	ggplot(aes(x=sample, y=log10(nGene), fill=sample)) + 
+  	geom_boxplot(fill=colorful_multi(4)) + 
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle("Number of Cells vs Number of Genes")
+
+```
+##### We can notice that there are a set of cells that failed for some reason. It could also be that there are biologically different types of cells (less compplex cells or quiescent cells), or one type is much smaller than the other (endothelial cells smaller than neurons). This could also be ambient RNA. Therefore, we need to explore the quality further.
+
+```{r more thorough quality control, echo = FALSE, warning = FALSE, message = FALSE}
+
+# Visualize the correlation between genes detected and number of UMIs and determine whether strong presence of cells with low numbers of genes/UMIs
+metadata %>% 
+  	ggplot(aes(x=nUMI, y=nGene, color=mitoRatio)) + 
+  	geom_point() + 
+	scale_colour_gradient(low = "gray90", high = "black") +
+  	stat_smooth(method=lm) +
+  	scale_x_log10() + 
+  	scale_y_log10() + 
+  	theme_classic() +
+  	geom_vline(xintercept = 500) +
+  	geom_hline(yintercept = 250) +
+  	facet_wrap(~sample)
+
+# Check further the mitochondria count ratio (distribution of mito gene expression detected per cell)
+metadata %>% 
+  	ggplot(aes(color=sample, x=mitoRatio, fill=sample)) + 
+  	geom_density(alpha = 0.2) + 
+  	scale_x_log10() + 
+  	theme_classic() +
+  	geom_vline(xintercept = 0.3) +
+    scale_fill_manual(values=colorful_multi(4))
+
+# Visualize the overall complexity of the gene expression by visualizing the genes detected per UMI
+metadata %>%
+  	ggplot(aes(x=log10GenesPerUMI, color = sample, fill=sample)) +
+  	geom_density(alpha = 0.2) +
+  	theme_classic() +
+  	geom_vline(xintercept = 0.85) +
+    scale_fill_manual(values=colorful_multi(4))
+
+```
+
+```{r preprocess, echo = FALSE, warning = FALSE, message = FALSE,fig.height = 4, fig.width = 6}
+
+seurat_lognorm <- seurat %>% NormalizeData() %>% FindVariableFeatures(nfeatures = 5000) 
+top_features <- head(VariableFeatures(seurat_lognorm), 20)
+plot1 <- VariableFeaturePlot(seurat_lognorm)
+plot2 <- LabelPoints(plot = plot1, points = top_features, repel = TRUE)
+plot1 + plot2
+
+all.genes <- rownames(seurat_lognorm)
+seurat_lognorm <- ScaleData(seurat_lognorm, features = all.genes) %>% 
+  RunPCA(npcs = 50) %>% 
+  RunTSNE(dims = 1:20) %>%
+  RunUMAP(dims = 1:20)
+
+FeaturePlot(seurat_lognorm, c("MKI67","NES","DCX","FOXG1","DLX2","EMX1","OTX2","LHX9","PECAM1"),
+                     ncol=3, reduction = "umap")
+FeaturePlot(seurat_lognorm, c("PECAM1","KDR","VEGFA","FLI1","CLDN5","CDH5","PDGFB","ACTA2","PDGFRB", "SOX2", "LEF1", "EBF1"),
+                     ncol=3, reduction = "umap")
+DimPlot(seurat_lognorm, reduction = "umap", split.by = "orig.ident")
+FeaturePlot(seurat_lognorm, features=c("nUMI", "nGene", "log10GenesPerUMI", "mitoRatio"))
+
+seurat_lognorm <- seurat_lognorm %>% 
+  FindNeighbors(reduction = "pca", dims = 1:30) %>% 
+  FindClusters(resolution = 0.5) %>% 
+  FindClusters(resolution = 0.2) %>% 
+  FindClusters(resolution = 0.8) %>%
+  FindClusters(resolution = 1)
+
+Idents(seurat_lognorm) <- "RNA_snn_res.0.2"
+DimPlot(seurat_lognorm, reduction = "umap", split.by = "orig.ident")
+
+markers <- FindAllMarkers(seurat_lognorm, only.pos = TRUE, min.pct = 0.15, logfc.threshold = 0.1)
+top_markers <- markers %>%
+    group_by(cluster) %>%
+    slice_max(n = 150, order_by = avg_log2FC)
+write.csv(top_markers, "markers.top_150_res.0.2.csv")
+
+FeaturePlot(seurat_lognorm, c("GAPDH"),ncol=3, reduction = "umap")
+
+saveRDS(seurat_lognorm, "object.seurat_merged.rds")
+
+
+# perform SCTransform
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+
+BiocManager::install("glmGamPoi")
+seurat_sct <- SCTransform(seurat, method = "glmGamPoi", verbose = FALSE)
+
+seurat_sct <- seurat_sct %>% RunPCA(npcs = 50) %>% 
+  RunTSNE(dims = 1:20) %>%
+  RunUMAP(dims = 1:20)
+
+seurat_sct <- seurat_sct %>% 
+  FindNeighbors(reduction = "pca", dims = 1:30) %>% 
+  FindClusters(resolution = 0.5) %>% 
+  FindClusters(resolution = 0.2) %>% 
+  FindClusters(resolution = 0.8) %>%
+  FindClusters(resolution = 1)
+
+Idents(seurat_sct) <- "SCT_snn_res.0.2"
+DimPlot(seurat_sct, reduction = "umap", split.by = "orig.ident")
+
+markers_sct <- FindAllMarkers(seurat_sct, only.pos = TRUE, min.pct = 0.15, logfc.threshold = 0.1)
+top_markers_sct <- markers_sct %>%
+    group_by(cluster) %>%
+    slice_max(n = 150, order_by = avg_log2FC)
+write.csv(top_markers_sct, "markers.top_150_res.0.2_sct.csv")
+
+
+FeaturePlot(seurat_sct, c("MKI67","NES","DCX","FOXG1","DLX2","EMX1","OTX2","LHX9","PECAM1"),
+                     ncol=3, reduction = "umap", order = TRUE) & NoAxes() | FeaturePlot(seurat_sct, c("MKI67","NES","DCX","FOXG1","DLX2","EMX1","OTX2","LHX9","PECAM1"),
+                     ncol=3, reduction = "tsne", order = TRUE) & NoAxes()
+
+FeaturePlot(seurat_sct, c("PECAM1","KDR","VEGFA","FLI1","CLDN5","CDH5","PDGFB","ACTA2","PDGFRB", "SOX2", "LEF1", "EBF1"),
+                     ncol=3, reduction = "umap", order = TRUE) & NoAxes() | FeaturePlot(seurat_sct, c("PECAM1","KDR","VEGFA","FLI1","CLDN5","CDH5","PDGFB","ACTA2","PDGFRB", "SOX2", "LEF1", "EBF1"),
+                     ncol=3, reduction = "tsne", order = TRUE) & NoAxes()
+
+DimPlot(seurat_sct, reduction = "umap", split.by = "orig.ident") | DimPlot(seurat_sct, reduction = "tsne", split.by = "orig.ident") 
+
+FeaturePlot(seurat_sct, features=c("nUMI", "nGene", "log10GenesPerUMI", "mitoRatio"), order = TRUE, reduction = "umap") & NoAxes() | FeaturePlot(seurat_sct, features=c("nUMI", "nGene", "log10GenesPerUMI", "mitoRatio"), order = TRUE, reduction = "tsne") & NoAxes()
+
+
+saveRDS(seurat_sct, "object.seurat_merged_sct.rds")
+
+# fig.height = 3, fig.width = 8
+DimPlot(seurat_sct, reduction = "tsne", split.by = "orig.ident", cols = colorful_multi(12))  & NoAxes()
+# fig.height = 4, fig.width = 6
+FeaturePlot(seurat_sct, features=c("nUMI", "nGene", "log10GenesPerUMI", "mitoRatio"), order = TRUE, reduction = "tsne") & NoAxes()
+# http://localhost:8788/chunk_output/A924D23Fcd6c4ebd/2BB98D9D/c7gv2lurm78h6/00001f.png?fixed_size=1
+top10_cl1 <- top_markers_sct %>% 
+  filter(cluster == "1")  %>%
+  slice_max(n = 12, order_by = avg_log2FC)
+FeaturePlot(seurat_sct, features = top10_cl1$gene, reduction = "tsne", order = TRUE) & NoAxes()
+
+```
+
+```{r filter based on QC}
+
+# Filter out low quality reads using selected thresholds - these will change with experiment
+filtered_seurat <- subset(x = seurat, 
+                         subset= (nUMI >= 2000 & nUMI <= 50000) & 
+                           # (nGene >= 800) & 
+                           # (log10GenesPerUMI < 0.94) & 
+                           (mitoRatio < 0.15))
+
+# Check filtered cells
+# Visualize the distribution of quality metrics
+VlnPlot(filtered_seurat, features = c("nUMI", "nGene", "log10GenesPerUMI", "mitoRatio"), ncol = 2, pt.size=0.1, split.by = "orig.ident")
+
+FeatureScatter(filtered_seurat, feature1 = "nUMI", feature2 = "mitoRatio", pt.size=0.1, group.by = "orig.ident") /
+ FeatureScatter(filtered_seurat, feature1 = "nUMI", feature2 = "nGene", pt.size=0.1, group.by = "orig.ident") 
+
+filtered_metadata <- filtered_seurat@meta.data
+# Visualize the number of cell counts per sample
+filtered_metadata %>% 
+  	ggplot(aes(x=sample, fill=sample)) + 
+  	geom_bar(fill=colorful_multi(4)) +
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle("Number of Cells before QC")
+
+# Visualize the number UMIs/transcripts per cell
+filtered_metadata %>% 
+  	ggplot(aes(color=sample, x=nUMI, fill= sample)) + 
+  	geom_density(alpha = 0.2) + 
+  	scale_x_log10() + 
+  	theme_classic() +
+  	ylab("log10 Cell density before QC") +
+  	geom_vline(xintercept = 500) +
+    scale_fill_manual(values=colorful_multi(4))
+
+# Visualize the distribution of genes detected per cell via histogram
+filtered_metadata %>% 
+  	ggplot(aes(color=sample, x=nGene, fill= sample)) + 
+  	geom_density(alpha = 0.2) + 
+  	theme_classic() +
+  	scale_x_log10() + 
+    ylab("log10 Cell density before QC") +
+  	geom_vline(xintercept = 300) +
+    scale_fill_manual(values=colorful_multi(4))
+
+# Visualize the distribution of genes detected per cell via boxplot
+filtered_metadata %>% 
+  	ggplot(aes(x=sample, y=log10(nGene), fill=sample)) + 
+  	geom_boxplot(fill=colorful_multi(4)) + 
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle("Number of Cells vs Number of Genes")
+
+```
+```{r preprocess filtered object, echo = FALSE, warning = FALSE, message = FALSE}
+
+filtered_seurat_sct <- SCTransform(filtered_seurat, method = "glmGamPoi", verbose = FALSE)
+
+filtered_seurat_sct <- filtered_seurat_sct %>% RunPCA(npcs = 50) %>% 
+  RunTSNE(dims = 1:20) %>%
+  RunUMAP(dims = 1:20)
+
+filtered_seurat_sct <- filtered_seurat_sct %>% 
+  FindNeighbors(reduction = "pca", dims = 1:30) %>% 
+  FindClusters(resolution = 0.5) %>% 
+  FindClusters(resolution = 0.2) %>% 
+  FindClusters(resolution = 0.8) %>%
+  FindClusters(resolution = 1)
+
+saveRDS(filtered_seurat_sct, "object.seurat_filtered_merged_sct.rds")
+
+Idents(filtered_seurat_sct) <- "SCT_snn_res.0.2"
+DimPlot(seurat_sct, reduction = "umap", split.by = "orig.ident")
+
+markers_filtered_sct <- FindAllMarkers(filtered_seurat_sct, only.pos = TRUE, min.pct = 0.15, logfc.threshold = 0.1)
+top_markers_filtered_sct <- markers_filtered_sct %>%
+    group_by(cluster) %>%
+    slice_max(n = 150, order_by = avg_log2FC)
+write.csv(top_markers_filtered_sct, "markers.top_150_res.0.2_filtered_sct.csv")
+
+FeaturePlot(filtered_seurat_sct, c("MKI67","NES","DCX","FOXG1","DLX2","EMX1","OTX2","LHX9","PECAM1"),
+                     ncol=3, reduction = "umap", order = TRUE) & NoAxes() | FeaturePlot(filtered_seurat_sct, c("MKI67","NES","DCX","FOXG1","DLX2","EMX1","OTX2","LHX9","PECAM1"),
+                     ncol=3, reduction = "tsne", order = TRUE) & NoAxes()
+
+FeaturePlot(filtered_seurat_sct, c("PECAM1","KDR","VEGFA","FLI1","CLDN5","CDH5","PDGFB","ACTA2","PDGFRB", "SOX2", "LEF1", "EBF1"),
+                     ncol=3, reduction = "umap", order = TRUE) & NoAxes() | FeaturePlot(filtered_seurat_sct, c("PECAM1","KDR","VEGFA","FLI1","CLDN5","CDH5","PDGFB","ACTA2","PDGFRB", "SOX2", "LEF1", "EBF1"),
+                     ncol=3, reduction = "tsne", order = TRUE) & NoAxes()
+
+DimPlot(filtered_seurat_sct, reduction = "umap", split.by = "orig.ident") | DimPlot(filtered_seurat_sct, reduction = "tsne", split.by = "orig.ident")
+
+FeaturePlot(filtered_seurat_sct, features=c("nUMI", "nGene", "log10GenesPerUMI", "mitoRatio"), reduction = "umap") & NoAxes() | FeaturePlot(filtered_seurat_sct, features=c("nUMI", "nGene", "log10GenesPerUMI", "mitoRatio"), reduction = "tsne") & NoAxes()
+
+table(filtered_seurat_sct$orig.ident)
+
+table(seurat$orig.ident) - table(filtered_seurat_sct$orig.ident)
+
+```
+```{r fig.height = 4, fig.width = 6}
+
+# A list of cell cycle markers, from Tirosh et al, 2015, is loaded with Seurat.  We can
+# segregate this list into markers of G2/M phase and markers of S phase
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+
+filtered_seurat <- CellCycleScoring(filtered_seurat, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
+
+# view cell cycle scores and phase assignments
+head(filtered_seurat[[]])
+
+# Visualize the distribution of cell cycle markers across
+RidgePlot(filtered_seurat, features = c("PCNA", "TOP2A", "MCM6", "MKI67"), ncol = 2)
+
+filtered_seurat_sct_ccreg <- SCTransform(filtered_seurat, method = "glmGamPoi", verbose = FALSE, vars.to.regress = c("nUMI", "nGene", "mitoRatio"))
+
+filtered_seurat_sct_ccreg <- filtered_seurat_sct_ccreg %>% RunPCA(npcs = 50) %>% 
+  RunTSNE(dims = 1:20) %>%
+  RunUMAP(dims = 1:20)
+
+filtered_seurat_sct_ccreg <- filtered_seurat_sct_ccreg %>% 
+  FindNeighbors(reduction = "pca", dims = 1:30) %>% 
+  FindClusters(resolution = 0.5) %>% 
+  FindClusters(resolution = 0.2) %>% 
+  FindClusters(resolution = 0.8) %>%
+  FindClusters(resolution = 1)
+
+saveRDS(filtered_seurat_sct_ccreg, "object.seurat_filtered_merged_sct_cc_reg.rds")
+
+Idents(filtered_seurat_sct_ccreg) <- "SCT_snn_res.0.2"
+DimPlot(seurat_sct, reduction = "umap", split.by = "orig.ident")
+
+markers_filtered_sct_ccreg <- FindAllMarkers(filtered_seurat_sct_ccreg, only.pos = TRUE, min.pct = 0.15, logfc.threshold = 0.1)
+top_markers_filtered_sct_ccreg <- markers_filtered_sct_ccreg %>%
+    group_by(cluster) %>%
+    slice_max(n = 150, order_by = avg_log2FC)
+write.csv(top_markers_filtered_sct_ccreg, "markers.top_150_res.0.2_filtered_sct_cc_reg.csv")
+
+FeaturePlot(filtered_seurat_sct_ccreg, c("MKI67","NES","DCX","FOXG1","DLX2","EMX1","OTX2","LHX9","PECAM1"),
+                     ncol=3, reduction = "umap", order = TRUE) & NoAxes() | FeaturePlot(filtered_seurat_sct_ccreg, c("MKI67","NES","DCX","FOXG1","DLX2","EMX1","OTX2","LHX9","PECAM1"),
+                     ncol=3, reduction = "tsne", order = TRUE) & NoAxes()
+
+FeaturePlot(filtered_seurat_sct_ccreg, c("PECAM1","KDR","VEGFA","FLI1","CLDN5","CDH5","PDGFB","ACTA2","PDGFRB", "SOX2", "LEF1", "EBF1"),
+                     ncol=3, reduction = "umap", order = TRUE) & NoAxes() | FeaturePlot(filtered_seurat_sct_ccreg, c("PECAM1","KDR","VEGFA","FLI1","CLDN5","CDH5","PDGFB","ACTA2","PDGFRB", "SOX2", "LEF1", "EBF1"),
+                     ncol=3, reduction = "tsne", order = TRUE) & NoAxes()
+
+DimPlot(filtered_seurat_sct_ccreg, reduction = "umap", split.by = "orig.ident") | DimPlot(filtered_seurat_sct_ccreg, reduction = "tsne", split.by = "orig.ident")
+
+FeaturePlot(filtered_seurat_sct_ccreg, features=c("nUMI", "nGene", "log10GenesPerUMI", "mitoRatio"), reduction = "umap") & NoAxes() | FeaturePlot(filtered_seurat_sct_ccreg, features=c("nUMI", "nGene", "log10GenesPerUMI", "mitoRatio"), reduction = "tsne") & NoAxes()
+
+FeaturePlot(filtered_seurat_sct_ccreg, c("GAPDH"),reduction = "umap", order = TRUE) & NoAxes() | FeaturePlot(filtered_seurat_sct_ccreg, c("GAPDH"),reduction = "tsne", order = TRUE) & NoAxes()
+
+
+# fig.height = 3, fig.width = 8
+DimPlot(filtered_seurat_sct_ccreg, reduction = "tsne", split.by = "orig.ident", cols = colorful_multi(12))  & NoAxes()
+# fig.height = 2, fig.width = 2
+DimPlot(filtered_seurat_sct_ccreg, reduction = "tsne", cols = colorful_multi(12))  & NoAxes()
+# fig.height = 4, fig.width = 6
+FeaturePlot(filtered_seurat_sct_ccreg, features=c("nUMI", "nGene", "log10GenesPerUMI", "mitoRatio"), order = TRUE, reduction = "tsne") & NoAxes()
+# fig.height = 4, fig.width = 6
+top1_all_cl <- top_markers_filtered_sct_ccreg %>% 
+  group_by(cluster) %>%
+  slice_max(n = 1, order_by = avg_log2FC)
+FeaturePlot(filtered_seurat_sct_ccreg, features = top1_all_cl$gene, reduction = "tsne", order = TRUE) & NoAxes()
+
+```
+
+```{r}
+
+top_markers_filtered_sct
+top_markers_filtered_sct_ccreg
+
+```
+
